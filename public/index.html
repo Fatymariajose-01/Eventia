@@ -3,50 +3,275 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Eventia - MVP</title>
+<title>Eventia</title>
 <style>
-  body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 16px; }
-  .evento { border: 1px solid #ccc; padding: 12px; margin: 10px 0; }
-  button { cursor: pointer; }
+  body { font-family: Arial, sans-serif; max-width: 800px; margin: 20px auto; padding: 0 16px; color: #333; }
+  .card { border: 1px solid #ccc; padding: 14px; margin: 12px 0; border-radius: 4px; }
+  .evento { border: 1px solid #ccc; padding: 12px; margin: 10px 0; border-radius: 4px; }
+  button { cursor: pointer; padding: 6px 12px; }
+  input, textarea { padding: 6px; margin: 4px 0; width: 100%; box-sizing: border-box; }
+  .btn-inline { width: auto; display: inline-block; }
   #mensaje { margin: 10px 0; font-weight: bold; }
+  .error { color: #d32f2f; }
+  .exito { color: #2e7d32; }
+  .detalles-error { margin: 4px 0 0 16px; color: #d32f2f; font-size: 0.9em; }
+  .oculto { display: none; }
 </style>
 </head>
 <body>
 <h1>Eventia</h1>
-<p>Usuario (id): <input id="usuario" type="number" value="2" style="width:60px"> (Ana López viene creada de ejemplo)</p>
-<p><input id="q" placeholder="Buscar por título, descripción o ciudad"> <button onclick="cargar()">Buscar</button></p>
+
+<div id="seccion-auth" class="card">
+  <div id="form-login">
+    <h3>Iniciar sesión</h3>
+    <label>Correo: <input id="login-correo" type="email" value="carlos@correo.com"></label>
+    <label>Contraseña: <input id="login-pass" type="password" value="Usuario123!"></label>
+    <button class="btn-inline" onclick="iniciarSesion()">Entrar</button>
+  </div>
+  <div id="info-sesion" class="oculto">
+    <p>Conectado como: <strong id="usuario-nombre"></strong> (<span id="usuario-rol"></span>)</p>
+    <button class="btn-inline" onclick="cerrarSesion()">Cerrar sesión</button>
+  </div>
+</div>
+
+<div id="seccion-publicar" class="card oculto">
+  <h3>Publicar evento</h3>
+  <label>Título: <input id="pub-titulo" type="text" placeholder="Título del evento"></label>
+  <label>Descripción: <textarea id="pub-desc" placeholder="Descripción"></textarea></label>
+  <label>Ciudad: <input id="pub-ciudad" type="text" placeholder="Ciudad"></label>
+  <label>Fecha: <input id="pub-fecha" type="date"></label>
+  <label>Cupo: <input id="pub-cupo" type="number" min="1" max="10000" value="50"></label>
+  <label>Precio: <input id="pub-precio" type="number" min="0" step="0.01" value="0"></label>
+  <button class="btn-inline" onclick="publicarEvento()">Publicar</button>
+</div>
+
 <div id="mensaje"></div>
-<div id="eventos"></div>
-<h2>Mis inscripciones</h2>
-<button onclick="misInscripciones()">Ver mis inscripciones</button>
-<ul id="inscripciones"></ul>
+
+<div class="card">
+  <h3>Explorar eventos</h3>
+  <div style="display: flex; gap: 8px;">
+    <input id="q" placeholder="Buscar por título, descripción o ciudad">
+    <button class="btn-inline" onclick="cargar()">Buscar</button>
+  </div>
+  <div id="eventos"></div>
+</div>
+
+<div class="card">
+  <h3>Mis inscripciones</h3>
+  <button class="btn-inline" onclick="misInscripciones()">Ver mis inscripciones</button>
+  <ul id="inscripciones"></ul>
+</div>
+
 <script>
+// Token almacenado EXCLUSIVAMENTE en memoria
+let token = null;
+let usuarioActual = null;
+
+function escaparHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function mostrarMensaje(texto, esError = false, detalles = []) {
+  const cont = document.getElementById('mensaje');
+  let html = `<div class="${esError ? 'error' : 'exito'}">${escaparHTML(texto)}</div>`;
+  if (detalles && detalles.length > 0) {
+    html += '<ul class="detalles-error">' + detalles.map(d => `<li>${escaparHTML(d)}</li>`).join('') + '</ul>';
+  }
+  cont.innerHTML = html;
+}
+
+function limpiarMensaje() {
+  document.getElementById('mensaje').innerHTML = '';
+}
+
+async function iniciarSesion() {
+  limpiarMensaje();
+  const correo = document.getElementById('login-correo').value;
+  const password = document.getElementById('login-pass').value;
+
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ correo, password })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      mostrarMensaje(data.error || 'Error al iniciar sesión', true, data.detalles);
+      return;
+    }
+
+    token = data.token;
+    usuarioActual = data.usuario;
+
+    document.getElementById('form-login').classList.add('oculto');
+    document.getElementById('info-sesion').classList.remove('oculto');
+    document.getElementById('usuario-nombre').textContent = usuarioActual.nombre;
+    document.getElementById('usuario-rol').textContent = usuarioActual.rol;
+
+    if (usuarioActual.rol === 'organizador' || usuarioActual.rol === 'administrador') {
+      document.getElementById('seccion-publicar').classList.remove('oculto');
+    } else {
+      document.getElementById('seccion-publicar').classList.add('oculto');
+    }
+
+    mostrarMensaje('Bienvenido, ' + usuarioActual.nombre);
+    cargar();
+  } catch (err) {
+    mostrarMensaje('Error de conexión', true);
+  }
+}
+
+function cerrarSesion() {
+  token = null;
+  usuarioActual = null;
+  document.getElementById('form-login').classList.remove('oculto');
+  document.getElementById('info-sesion').classList.add('oculto');
+  document.getElementById('seccion-publicar').classList.add('oculto');
+  document.getElementById('inscripciones').innerHTML = '';
+  mostrarMensaje('Sesión cerrada');
+}
+
+function obtenerHeaders() {
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers.Authorization = 'Bearer ' + token;
+  }
+  return headers;
+}
+
 async function cargar() {
   const q = document.getElementById('q').value;
-  const eventos = await (await fetch('/api/eventos?q=' + encodeURIComponent(q))).json();
-  document.getElementById('eventos').innerHTML = eventos.map(e => `
-    <div class="evento">
-      <strong>${e.titulo}</strong> - ${e.ciudad} - ${e.fecha}<br>${e.descripcion || ''}<br>
-      Cupos disponibles: <span id="cupo-${e.id}">${e.cupo_disponible}</span> de ${e.cupo_total}<br>
-      <button onclick="inscribir(${e.id})" ${e.cupo_disponible === 0 ? 'disabled' : ''}>Inscribirme</button>
-    </div>`).join('') || 'No se encontraron eventos.';
+  try {
+    const res = await fetch('/api/eventos?q=' + encodeURIComponent(q));
+    const eventos = await res.json();
+    if (!res.ok) {
+      document.getElementById('eventos').innerHTML = `<p class="error">${escaparHTML(eventos.error)}</p>`;
+      return;
+    }
+
+    if (!Array.isArray(eventos) || eventos.length === 0) {
+      document.getElementById('eventos').innerHTML = '<p>No se encontraron eventos.</p>';
+      return;
+    }
+
+    document.getElementById('eventos').innerHTML = eventos.map(e => `
+      <div class="evento">
+        <strong>${escaparHTML(e.titulo)}</strong> - ${escaparHTML(e.ciudad || 'Sin ciudad')} - ${escaparHTML(e.fecha)}<br>
+        <em>${escaparHTML(e.descripcion || 'Sin descripción')}</em><br>
+        Precio: Q${Number(e.precio).toFixed(2)} | Cupos disponibles: <span id="cupo-${e.id}">${e.cupo_disponible}</span> de ${e.cupo_total}<br>
+        <button class="btn-inline" onclick="inscribir(${e.id})" ${e.cupo_disponible === 0 ? 'disabled' : ''}>
+          ${e.cupo_disponible === 0 ? 'Agotado' : 'Inscribirme'}
+        </button>
+      </div>`).join('');
+  } catch (err) {
+    document.getElementById('eventos').innerHTML = '<p class="error">Error al cargar eventos.</p>';
+  }
 }
+
 async function inscribir(evento_id) {
-  const usuario_id = document.getElementById('usuario').value;
-  const r = await fetch('/api/inscripciones', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ usuario_id, evento_id }) });
-  const data = await r.json();
-  document.getElementById('mensaje').textContent = r.ok ? data.mensaje + '. Se envió la confirmación.' : 'Error: ' + data.error;
-  cargar();
+  limpiarMensaje();
+  if (!token) {
+    mostrarMensaje('Debes iniciar sesión para inscribirte', true);
+    return;
+  }
+
+  try {
+    const res = await fetch(`/api/eventos/${evento_id}/inscripciones`, {
+      method: 'POST',
+      headers: obtenerHeaders(),
+      body: JSON.stringify({})
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      mostrarMensaje(data.error || 'Error al inscribirse', true, data.detalles);
+    } else {
+      mostrarMensaje(data.mensaje + '. Se envió la confirmación.');
+      cargar();
+      misInscripciones();
+    }
+  } catch (err) {
+    mostrarMensaje('Error de red al procesar la inscripción', true);
+  }
 }
+
+async function publicarEvento() {
+  limpiarMensaje();
+  if (!token) {
+    mostrarMensaje('Debes iniciar sesión para publicar', true);
+    return;
+  }
+
+  const payload = {
+    titulo: document.getElementById('pub-titulo').value,
+    descripcion: document.getElementById('pub-desc').value || null,
+    ciudad: document.getElementById('pub-ciudad').value || null,
+    fecha: document.getElementById('pub-fecha').value,
+    cupo: parseInt(document.getElementById('pub-cupo').value, 10),
+    precio: parseFloat(document.getElementById('pub-precio').value)
+  };
+
+  try {
+    const res = await fetch('/api/eventos', {
+      method: 'POST',
+      headers: obtenerHeaders(),
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      mostrarMensaje(data.error || 'Error al publicar evento', true, data.detalles);
+    } else {
+      mostrarMensaje('Evento "' + data.titulo + '" publicado con éxito.');
+      document.getElementById('pub-titulo').value = '';
+      document.getElementById('pub-desc').value = '';
+      document.getElementById('pub-ciudad').value = '';
+      document.getElementById('pub-fecha').value = '';
+      cargar();
+    }
+  } catch (err) {
+    mostrarMensaje('Error de red al publicar el evento', true);
+  }
+}
+
 async function misInscripciones() {
-  const id = document.getElementById('usuario').value;
-  const r = await fetch('/api/inscripciones/usuario/' + id);
-  const lista = await r.json();
-  document.getElementById('inscripciones').innerHTML = r.ok
-    ? (lista.map(i => `<li>${i.titulo} - ${i.ciudad} - ${i.fecha}</li>`).join('') || '<li>Sin inscripciones</li>')
-    : '<li>' + lista.error + '</li>';
+  limpiarMensaje();
+  if (!token) {
+    mostrarMensaje('Debes iniciar sesión para consultar tus inscripciones', true);
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/inscripciones/mias', {
+      headers: obtenerHeaders()
+    });
+    const lista = await res.json();
+    if (!res.ok) {
+      document.getElementById('inscripciones').innerHTML = `<li class="error">${escaparHTML(lista.error)}</li>`;
+      return;
+    }
+
+    if (!Array.isArray(lista) || lista.length === 0) {
+      document.getElementById('inscripciones').innerHTML = '<li>Sin inscripciones registradas.</li>';
+      return;
+    }
+
+    document.getElementById('inscripciones').innerHTML = lista.map(i => `
+      <li>
+        <strong>${escaparHTML(i.titulo_evento)}</strong> - ${escaparHTML(i.ciudad || '')} (${escaparHTML(i.fecha_evento)})
+        <br><small>Inscrito el: ${escaparHTML(i.fecha_inscripcion)}</small>
+      </li>
+    `).join('');
+  } catch (err) {
+    document.getElementById('inscripciones').innerHTML = '<li class="error">Error al consultar inscripciones.</li>';
+  }
 }
+
 cargar();
 </script>
 </body>

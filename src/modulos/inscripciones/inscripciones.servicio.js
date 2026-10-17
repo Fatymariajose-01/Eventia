@@ -1,34 +1,58 @@
-// Módulo Inscripciones: inscribe usuarios, controla cupos y lista inscripciones.
+// Módulo Inscripciones: consulta de inscripciones de usuarios
 const db = require('../../compartido/db');
 const { ErrorNegocio } = require('../../compartido/errores');
-const usuarios = require('../usuarios/usuarios.servicio');
-const eventos = require('../eventos/eventos.servicio');
-const notificaciones = require('../notificaciones/notificaciones.servicio');
+const { esIdValido } = require('../../compartido/validacion');
 
-// La inscripción y la actualización del cupo ocurren en UNA transacción:
-// si algo falla, no queda una inscripción sin cupo descontado (ni al revés).
-const inscribirTx = db.transaction((usuario_id, evento_id) => {
-  if (db.prepare('SELECT id FROM inscripciones WHERE usuario_id = ? AND evento_id = ?').get(usuario_id, evento_id)) {
-    throw new ErrorNegocio('El usuario ya está inscrito en este evento', 409);
+function misInscripciones(usuarioId) {
+  return db
+    .prepare(
+      `SELECT i.id, i.evento_id, e.titulo AS titulo_evento, e.fecha AS fecha_evento, e.ciudad, i.fecha_inscripcion
+       FROM inscripciones i
+       JOIN eventos e ON e.id = i.evento_id
+       WHERE i.usuario_id = ?
+       ORDER BY e.fecha`
+    )
+    .all(usuarioId);
+}
+
+function obtenerPorId(id, usuarioActual) {
+  if (!esIdValido(id)) {
+    throw new ErrorNegocio('Datos inválidos', 400, ['El id debe ser un entero positivo']);
   }
-  eventos.ocuparCupo(evento_id);
-  const r = db.prepare('INSERT INTO inscripciones (usuario_id, evento_id) VALUES (?,?)').run(usuario_id, evento_id);
-  return r.lastInsertRowid;
-});
+  const idNum = Number(id);
 
-function inscribir({ usuario_id, evento_id }) {
-  const usuario = usuarios.obtener(usuario_id);
-  const evento = eventos.obtener(evento_id);
-  const id = inscribirTx(usuario.id, evento.id);
-  notificaciones.enviarConfirmacion(usuario, evento);
-  return { inscripcion_id: id, mensaje: 'Inscripción realizada', disponibilidad: eventos.disponibilidad(evento.id) };
+  const ins = db
+    .prepare(
+      `SELECT i.id, i.usuario_id, i.evento_id, i.fecha_inscripcion,
+              e.titulo AS titulo_evento, e.fecha AS fecha_evento, e.organizador_id
+       FROM inscripciones i
+       JOIN eventos e ON e.id = i.evento_id
+       WHERE i.id = ?`
+    )
+    .get(idNum);
+
+  if (!ins) {
+    throw new ErrorNegocio('Inscripción no encontrada', 404);
+  }
+
+  const esDuenio = ins.usuario_id === usuarioActual.id;
+  const esOrganizador = ins.organizador_id === usuarioActual.id;
+  const esAdmin = usuarioActual.rol === 'administrador';
+
+  if (!esDuenio && !esOrganizador && !esAdmin) {
+    throw new ErrorNegocio('No tienes permiso para consultar esta inscripción', 403);
+  }
+
+  return {
+    id: ins.id,
+    evento_id: ins.evento_id,
+    titulo_evento: ins.titulo_evento,
+    fecha_evento: ins.fecha_evento,
+    fecha_inscripcion: ins.fecha_inscripcion,
+  };
 }
 
-function deUsuario(usuario_id) {
-  usuarios.obtener(usuario_id);
-  return db.prepare(`SELECT i.id, i.fecha_inscripcion, e.titulo, e.fecha, e.ciudad
-                     FROM inscripciones i JOIN eventos e ON e.id = i.evento_id
-                     WHERE i.usuario_id = ? ORDER BY e.fecha`).all(usuario_id);
-}
-
-module.exports = { inscribir, deUsuario };
+module.exports = {
+  misInscripciones,
+  obtenerPorId,
+};

@@ -1,9 +1,22 @@
+// Rutas del módulo de inscripciones
 const router = require('express').Router();
 const servicio = require('./inscripciones.servicio');
+const { autenticar } = require('../../compartido/auth');
 
-router.post('/', (req, res) => res.status(201).json(servicio.inscribir({
-  usuario_id: Number(req.body.usuario_id), evento_id: Number(req.body.evento_id)
-})));
-router.get('/usuario/:id', (req, res) => res.json(servicio.deUsuario(Number(req.params.id))));
+router.get('/mias', autenticar, (req, res, next) => {
+  try {
+    res.json(servicio.misInscripciones(req.usuario.id));
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/:id', autenticar, (req, res, next) => {
+  try {
+    res.json(servicio.obtenerPorId(req.params.id, req.usuario));
+  } catch (error) {
+    next(error);
+  }
+});
 
 module.exports = router;

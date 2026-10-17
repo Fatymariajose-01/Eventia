@@ -1,0 +1,408 @@
+openapi: 3.0.3
+info:
+  title: Eventia API
+  version: 2.0.0
+  description: >
+    API de Eventia con los controles de seguridad definidos en la auditoría.
+    Las operaciones protegidas requieren un token JWT en el encabezado
+    Authorization (Bearer). El token se obtiene en POST /api/auth/login y expira en 1 hora.
+servers:
+  - url: http://localhost:3000
+tags:
+  - name: Autenticación
+  - name: Usuarios
+  - name: Eventos
+  - name: Inscripciones
+
+paths:
+  /api/auth/login:
+    post:
+      tags: [Autenticación]
+      summary: Iniciar sesión
+      description: >
+        Valida las credenciales y devuelve un token JWT. Ante cualquier credencial
+        incorrecta responde con el mismo mensaje genérico, sin indicar si el correo existe.
+        Se permiten como máximo 5 intentos fallidos cada 15 minutos por IP y correo.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginEntrada' }
+            example: { correo: ana@correo.com, password: Usuario123! }
+      responses:
+        '200':
+          description: Inicio de sesión correcto.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LoginRespuesta' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401':
+          description: Credenciales incorrectas (mensaje genérico).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: Correo o contraseña incorrectos }
+        '429': { $ref: '#/components/responses/DemasiadasSolicitudes' }
+
+  /api/usuarios:
+    post:
+      tags: [Usuarios]
+      summary: Registrar usuario
+      description: >
+        Registro público. Siempre crea la cuenta con rol "usuario". Si el cliente
+        envía "rol" o cualquier otra propiedad no permitida, la solicitud se rechaza.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistroEntrada' }
+      responses:
+        '201':
+          description: Usuario creado.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/UsuarioPublico'
+                  - type: object
+                    properties:
+                      rol: { type: string, enum: [usuario] }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '409':
+          description: No es posible registrar ese correo.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/usuarios/{id}:
+    get:
+      tags: [Usuarios]
+      summary: Consultar un usuario
+      description: >
+        Devuelve solo id, nombre y correo. Un usuario solo puede consultar su propio
+        perfil; el administrador puede consultar cualquiera. Nunca se devuelve el hash de la
+        contraseña, el teléfono ni el rol.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Datos públicos del usuario.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/UsuarioPublico' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /api/eventos:
+    get:
+      tags: [Eventos]
+      summary: Consultar y buscar eventos públicos
+      security: []
+      parameters:
+        - in: query
+          name: q
+          required: false
+          schema: { type: string, maxLength: 100 }
+          description: Texto a buscar en título, descripción o ciudad.
+      responses:
+        '200':
+          description: Lista de eventos.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Evento' }
+    post:
+      tags: [Eventos]
+      summary: Crear evento
+      description: >
+        Solo organizadores y administradores. El organizador del evento se toma del token,
+        no del cuerpo. Se rechazan propiedades no permitidas (por ejemplo organizador_id o cupo_disponible).
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventoEntrada' }
+            example:
+              titulo: Concierto universitario
+              descripcion: Bandas estudiantiles
+              ciudad: Quetzaltenango
+              fecha: '2027-05-10'
+              cupo: 150
+              precio: 75
+      responses:
+        '201':
+          description: Evento creado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Evento' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+
+  /api/eventos/{id}:
+    put:
+      tags: [Eventos]
+      summary: Modificar evento
+      description: >
+        Solo el organizador dueño del evento o un administrador. Tener el rol de organizador
+        no es suficiente: el evento debe pertenecerle. Se pueden enviar uno o varios campos.
+        El cupo nuevo no puede ser menor que las inscripciones existentes.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EventoModificacion' }
+            example: { precio: 60, cupo: 200 }
+      responses:
+        '200':
+          description: Evento modificado.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Evento' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409':
+          description: El cupo nuevo es menor que las inscripciones existentes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /api/eventos/{id}/inscripciones:
+    post:
+      tags: [Inscripciones]
+      summary: Inscribirse en un evento
+      description: >
+        Usuario registrado u organizador (solo en eventos que no organiza). Cada usuario ocupa
+        como máximo un cupo por evento, por lo que el cuerpo debe ir vacío; se rechaza "cantidad"
+        o cualquier otra propiedad. El cupo se descuenta de forma atómica dentro de una transacción.
+        Límite de 10 solicitudes por minuto por usuario.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              maxProperties: 0
+      responses:
+        '201':
+          description: Inscripción realizada.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/InscripcionCreada' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+        '409':
+          description: El usuario ya está inscrito o el evento no tiene cupos.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429': { $ref: '#/components/responses/DemasiadasSolicitudes' }
+    get:
+      tags: [Inscripciones]
+      summary: Consultar inscritos de un evento
+      description: Solo el organizador dueño del evento o un administrador.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Lista de personas inscritas.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id: { type: integer }
+                    nombre: { type: string }
+                    correo: { type: string, format: email }
+                    fecha_inscripcion: { type: string }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+  /api/inscripciones/{id}:
+    get:
+      tags: [Inscripciones]
+      summary: Consultar una inscripción
+      description: >
+        Solo el dueño de la inscripción, el organizador del evento o un administrador.
+        No devuelve el correo del inscrito.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/Id'
+      responses:
+        '200':
+          description: Datos de la inscripción.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Inscripcion' }
+        '400': { $ref: '#/components/responses/DatosInvalidos' }
+        '401': { $ref: '#/components/responses/NoAutenticado' }
+        '403': { $ref: '#/components/responses/SinPermiso' }
+        '404': { $ref: '#/components/responses/NoEncontrado' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Id:
+      in: path
+      name: id
+      required: true
+      schema: { type: integer, minimum: 1 }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+        detalles:
+          type: array
+          items: { type: string }
+    LoginEntrada:
+      type: object
+      additionalProperties: false
+      required: [correo, password]
+      properties:
+        correo: { type: string, format: email }
+        password: { type: string }
+    LoginRespuesta:
+      type: object
+      properties:
+        token: { type: string }
+        tipo: { type: string, example: Bearer }
+        expira_en: { type: integer, example: 3600 }
+        usuario:
+          type: object
+          properties:
+            id: { type: integer }
+            nombre: { type: string }
+            rol: { type: string, enum: [usuario, organizador, administrador] }
+    RegistroEntrada:
+      type: object
+      additionalProperties: false
+      required: [nombre, correo, password]
+      properties:
+        nombre: { type: string, minLength: 2, maxLength: 100 }
+        correo: { type: string, format: email, maxLength: 150 }
+        password:
+          type: string
+          minLength: 8
+          maxLength: 72
+          description: Debe incluir letras y números.
+    UsuarioPublico:
+      type: object
+      properties:
+        id: { type: integer }
+        nombre: { type: string }
+        correo: { type: string, format: email }
+    EventoEntrada:
+      type: object
+      additionalProperties: false
+      required: [titulo, fecha, cupo, precio]
+      properties:
+        titulo: { type: string, minLength: 3, maxLength: 150 }
+        descripcion: { type: string, maxLength: 1000 }
+        ciudad: { type: string, minLength: 2, maxLength: 100 }
+        fecha: { type: string, format: date, description: No puede estar en el pasado. }
+        cupo: { type: integer, minimum: 1, maximum: 10000 }
+        precio: { type: number, minimum: 0, maximum: 100000 }
+    EventoModificacion:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        titulo: { type: string, minLength: 3, maxLength: 150 }
+        descripcion: { type: string, maxLength: 1000 }
+        ciudad: { type: string, minLength: 2, maxLength: 100 }
+        fecha: { type: string, format: date }
+        cupo: { type: integer, minimum: 1, maximum: 10000 }
+        precio: { type: number, minimum: 0, maximum: 100000 }
+    Evento:
+      type: object
+      properties:
+        id: { type: integer }
+        titulo: { type: string }
+        descripcion: { type: string, nullable: true }
+        ciudad: { type: string, nullable: true }
+        fecha: { type: string, format: date }
+        precio: { type: number }
+        cupo_total: { type: integer }
+        cupo_disponible: { type: integer }
+        organizador_id: { type: integer }
+    Inscripcion:
+      type: object
+      properties:
+        id: { type: integer }
+        evento_id: { type: integer }
+        titulo_evento: { type: string }
+        fecha_evento: { type: string, format: date }
+        fecha_inscripcion: { type: string }
+    InscripcionCreada:
+      type: object
+      properties:
+        inscripcion_id: { type: integer }
+        evento_id: { type: integer }
+        mensaje: { type: string, example: Inscripción realizada }
+        disponibilidad:
+          type: object
+          properties:
+            evento_id: { type: integer }
+            cupo_total: { type: integer }
+            cupo_disponible: { type: integer }
+            disponible: { type: boolean }
+
+  responses:
+    DatosInvalidos:
+      description: Datos inválidos o propiedades no permitidas.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Datos inválidos, detalles: [El cupo debe ser un número entero entre 1 y 10000] }
+    NoAutenticado:
+      description: Token ausente, inválido o expirado.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: Autenticación requerida }
+    SinPermiso:
+      description: El usuario no tiene permiso sobre la operación o el recurso.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: No tienes permiso para realizar esta operación }
+    NoEncontrado:
+      description: El recurso no existe.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    DemasiadasSolicitudes:
+      description: Se superó el límite de solicitudes.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
